@@ -21,13 +21,11 @@ Const STEPPEDAREACHART_C = "SteppedAreaChart"
 Const COMBOCHART_C = "ComboChart"
 Const PIECHART_C = "PieChart"
 
+Private headColumn() As Variant
 
-Public headString As String
-Public headNumber As String
-Public headNumber1 As String
 Public table As String
 Public typeChart As String
-Public modeChart As Byte
+Public includeHead As Boolean
 
 Private optionVisualization As String
 Public customChart As String
@@ -47,6 +45,7 @@ Public Sub openWebChart()
     End If
     
 End Sub
+
 Public Function createFileJavascript() As Boolean
     
     Rem elimina el fichero script.js y lo vuelve a crear con el nuevo código
@@ -81,14 +80,8 @@ Private Function writeJavascript() As String
     loadPackage = "google.charts.load('current', {'packages':['corechart']});"
     callDrawchart = "google.charts.setOnLoadCallback(drawChart);"
     
-    If Me.modeChart = 2 Then
-        Set addRows = converterRecordsetToCollection2(headString, headNumber, headNumber1, table)
-        funcDrawChart = drawChartForJavascript(addRows)
-    Else
-    
-        Set addRows = converterRecordsetToCollection(headString, headNumber, table)
-        funcDrawChart = drawChartForJavascript(addRows)
-    End If
+    Set addRows = converterRecordsetToCollection(headColumn, table, includeHead)
+    funcDrawChart = drawChartForJavascript(addRows)
     
     If customChart <> Empty Then
         optionVisualization = formatString("var options = {0};", customChart)
@@ -103,14 +96,15 @@ Private Function writeJavascript() As String
                     
 End Function
 
-
-Private Function converterRecordsetToCollection(ByVal field_1 As String, ByVal field_2 As String, ByVal table As String) As Collection
-    Rem esta función lee la base de datos de ACCESS y retorno una colleción con esos datos
+Public Function converterRecordsetToCollection(ByRef fields(), ByVal table As String, Optional includeHead = False) As Collection
+    Rem covierte el recordset a un collección inlcuyendole llavas al inicio y final de cada item
     Dim rs As Recordset
     Dim sql As String
     Dim addRows As New Collection
+    Dim rowValues As String
+    Dim columnNames As String
 
-    sql = formatString("select {0},{1} from {2}", field_1, field_2, table)
+    sql = "SELECT " & Join(fields, ",") & " FROM " & table
         
     Set rs = CurrentDb.OpenRecordset(sql)
     
@@ -118,57 +112,42 @@ Private Function converterRecordsetToCollection(ByVal field_1 As String, ByVal f
         If .EOF And .BOF Then
             Debug.Print "No hay registros"
         Else
+            'crea cabeceras en el primer indice de la colección
+            If includeHead Then
+            
+                columnNames = "['" & Join(fields, "','") & "']"
+                addRows.Add columnNames
+
+            End If
+            
+            'carga el los datos del recordset
             .MoveFirst
             Do While Not (.EOF)
-                 addRows.Add formatString( _
-                                            "['{0}',{1}]", _
-                                            .Fields(field_1).Value, _
-                                            .Fields(field_2).Value)
+                rowValues = Empty
+                
+                For i = 0 To UBound(fields)
+                
+                    If i = 0 Then
+                        rowValues = rowValues & "'" & .fields(fields(i)).Value & "'"
+                    Else
+                        rowValues = rowValues & .fields(fields(i)).Value
+                    End If
+                    
+                    If i < UBound(fields) Then
+                        rowValues = rowValues & ","
+                    End If
+                    
+                Next i
+                
+                addRows.Add "[" & rowValues & "]"
                 .MoveNext
             Loop
         End If
     End With
     
     Set converterRecordsetToCollection = addRows
-    Debug.Print vbCrLf; "Proceso terminado"
-    
 End Function
-Public Function converterRecordsetToCollection2(ByVal field_1 As String, ByVal field_2 As String, ByVal field_3, ByVal table As String) As Collection
-    
-    Dim rs As Recordset
-    Dim sql As String
-    Dim addRows As New Collection
 
-    sql = formatString("select {0},{1},{2} from {3}", field_1, field_2, field_3, table)
-        
-    Set rs = CurrentDb.OpenRecordset(sql)
-    
-    With rs
-        If .EOF And .BOF Then
-            Debug.Print "No hay registros"
-        Else
-            addRows.Add formatString("['{0}','{1}','{2}']", _
-                                    .Fields(0).Name, _
-                                    .Fields(1).Name, _
-                                    .Fields(2).Name)
-            
-            .MoveFirst
-            Do While Not (.EOF)
-                 addRows.Add formatString( _
-                                            "['{0}',{1},{2}]", _
-                                            .Fields(field_1).Value, _
-                                            .Fields(field_2).Value, _
-                                            .Fields(field_3).Value)
-                .MoveNext
-            Loop
-            Debug.Print "Array creado de 3 columnas para Javascripts"
-        End If
-    End With
-    
-    Set converterRecordsetToCollection2 = addRows
-    Debug.Print vbCrLf; "Proceso terminado"
-    
-End Function
 Private Function formatString(ByVal text As String, ParamArray values()) As String
     
     Rem formatea la cadena que se le pase con los valores, esta cadena debe contener marcas como '{0}'
@@ -193,7 +172,7 @@ Private Function drawChartForJavascript(ByRef addRows As Collection) As String
     
     arrToJs = converterCollectionToString(addRows)
     
-    If Me.modeChart = 2 Then
+    If includeHead Then
         funcJavascript = formatString( _
                                     "function drawChart() {{0}{1}{1}  var data = google.visualization.arrayToDataTable([{0}{2}{0}]);" _
                                     , vbCrLf, BLANK, arrToJs)
@@ -201,7 +180,7 @@ Private Function drawChartForJavascript(ByRef addRows As Collection) As String
     Else
         funcJavascript = formatString( _
                                     "function drawChart() {{1}{0}{0}var data = new google.visualization.DataTable();{1}{0}{0}data.addColumn('string', '{2}');{1}{0}{0}data.addColumn('number', '{3}');{1}{0}{0}data.addRows([{1}{0}{0}{0}{0}{4}{1}{0}{0}]);" _
-                                    , BLANK, vbCrLf, headString, headNumber, arrToJs)
+                                    , BLANK, vbCrLf, headColumn(0), headColumn(1), arrToJs)
                                     
     End If
     
@@ -295,14 +274,18 @@ End Property
 Public Property Get PieChart() As String
     PieChart = PIECHART_C
 End Property
+Public Property Let addHead(ByRef arrHead() As Variant)
+    headColumn = arrHead
+End Property
 
-Rem al crearse una instancia de esta clase
+Rem propiedades inicializadas al instanciar un objeto de esta clase
 Private Sub Class_Initialize()
 
     With Me
-        .modeChart = 1
-        .typeChart = PIECHART_C
+        .typeChart = BARCHART_C
         optionVisualization = formatString("var options = {0}", OPTION_DEFAULT_CHART)
     End With
     
 End Sub
+
+
