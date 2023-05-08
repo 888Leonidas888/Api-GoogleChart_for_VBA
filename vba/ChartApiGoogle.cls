@@ -10,6 +10,7 @@ Attribute VB_Exposed = False
 Option Compare Database
 
 Const BLANK = " "
+Const OPTION_DEFAULT_CHART = "{'title':'Gráfico generado para MsAccess','width':800,'height':600}"
 
 Rem tipo de gráfico que se puede mostrar
 Const COLUMNCHART_C = "ColumnChart"
@@ -20,16 +21,20 @@ Const STEPPEDAREACHART_C = "SteppedAreaChart"
 Const COMBOCHART_C = "ComboChart"
 Const PIECHART_C = "PieChart"
 
-Public title As String
+
 Public headString As String
 Public headNumber As String
+Public headNumber1 As String
 Public table As String
-Public widthChart As Integer
-Public eightChart As Integer
 Public typeChart As String
+Public modeChart As Byte
+
+Private optionVisualization As String
+Public customChart As String
 
 Public Sub openWebChart()
-    'leer html
+    Rem muestra en el navegador chrome el grafico con los datos extraídos de Access
+    
     Dim indexHTML As String
     Dim content As String
     Dim funcJS As String
@@ -43,7 +48,9 @@ Public Sub openWebChart()
     
 End Sub
 Public Function createFileJavascript() As Boolean
-
+    
+    Rem elimina el fichero script.js y lo vuelve a crear con el nuevo código
+    
     Dim pathJavascript As String
     Dim funcJS As String
     Dim fso As New Scripting.FileSystemObject
@@ -60,6 +67,8 @@ Public Function createFileJavascript() As Boolean
 End Function
 
 Private Function writeJavascript() As String
+
+    Rem Crea todo el script para el fichero javascripts
     
     Dim loadPackage As String
     Dim callDrawchart As String
@@ -72,22 +81,31 @@ Private Function writeJavascript() As String
     loadPackage = "google.charts.load('current', {'packages':['corechart']});"
     callDrawchart = "google.charts.setOnLoadCallback(drawChart);"
     
-    Set addRows = readRecordset(headString, headNumber, table)
-    funcDrawChart = drawChartForJavascript(addRows, headString, headNumber)
+    If Me.modeChart = 2 Then
+        Set addRows = converterRecordsetToCollection2(headString, headNumber, headNumber1, table)
+        funcDrawChart = drawChartForJavascript(addRows)
+    Else
     
-    options = formatString("var options = {'title':'{0}','width':{1},'eight':{2}};", title, widthChart, eightChart)
+        Set addRows = converterRecordsetToCollection(headString, headNumber, table)
+        funcDrawChart = drawChartForJavascript(addRows)
+    End If
+    
+    If customChart <> Empty Then
+        optionVisualization = formatString("var options = {0};", customChart)
+    End If
+    
     var_chart = formatString("var chart = new google.visualization.{0}(document.getElementById('chart_div'));", typeChart)
     chart = "chart.draw(data, options);" & vbCrLf & "}"
     
     
-    writeJavascript = formatString(loadPackage + "{0}" + callDrawchart + "{0}" + funcDrawChart + "{0}{1}{1}" + options + "{0}{1}{1}" + var_chart + "{0}{1}{1}" + chart, _
+    writeJavascript = formatString(loadPackage + "{0}" + callDrawchart + "{0}" + funcDrawChart + "{0}{1}{1}" + optionVisualization + "{0}{1}{1}" + var_chart + "{0}{1}{1}" + chart, _
                     vbCrLf, BLANK)
                     
 End Function
 
 
-Private Function readRecordset(ByVal field_1 As String, ByVal field_2 As String, ByVal table As String) As Collection
-    
+Private Function converterRecordsetToCollection(ByVal field_1 As String, ByVal field_2 As String, ByVal table As String) As Collection
+    Rem esta función lee la base de datos de ACCESS y retorno una colleción con esos datos
     Dim rs As Recordset
     Dim sql As String
     Dim addRows As New Collection
@@ -111,11 +129,49 @@ Private Function readRecordset(ByVal field_1 As String, ByVal field_2 As String,
         End If
     End With
     
-    Set readRecordset = addRows
+    Set converterRecordsetToCollection = addRows
+    Debug.Print vbCrLf; "Proceso terminado"
+    
+End Function
+Public Function converterRecordsetToCollection2(ByVal field_1 As String, ByVal field_2 As String, ByVal field_3, ByVal table As String) As Collection
+    
+    Dim rs As Recordset
+    Dim sql As String
+    Dim addRows As New Collection
+
+    sql = formatString("select {0},{1},{2} from {3}", field_1, field_2, field_3, table)
+        
+    Set rs = CurrentDb.OpenRecordset(sql)
+    
+    With rs
+        If .EOF And .BOF Then
+            Debug.Print "No hay registros"
+        Else
+            addRows.Add formatString("['{0}','{1}','{2}']", _
+                                    .Fields(0).Name, _
+                                    .Fields(1).Name, _
+                                    .Fields(2).Name)
+            
+            .MoveFirst
+            Do While Not (.EOF)
+                 addRows.Add formatString( _
+                                            "['{0}',{1},{2}]", _
+                                            .Fields(field_1).Value, _
+                                            .Fields(field_2).Value, _
+                                            .Fields(field_3).Value)
+                .MoveNext
+            Loop
+            Debug.Print "Array creado de 3 columnas para Javascripts"
+        End If
+    End With
+    
+    Set converterRecordsetToCollection2 = addRows
     Debug.Print vbCrLf; "Proceso terminado"
     
 End Function
 Private Function formatString(ByVal text As String, ParamArray values()) As String
+    
+    Rem formatea la cadena que se le pase con los valores, esta cadena debe contener marcas como '{0}'
     
     Dim i As Integer
     
@@ -126,31 +182,47 @@ Private Function formatString(ByVal text As String, ParamArray values()) As Stri
     formatString = text
     
 End Function
-Private Function drawChartForJavascript(ByRef addRows As Collection, ByVal head1 As String, ByVal head2 As String) As String
 
+Private Function drawChartForJavascript(ByRef addRows As Collection) As String
+    
+    Rem Esta función replica la función en JAVASCRIPT para cargar el array con la
+    Rem información de msaccess
+    
     Dim funcJavascript As String
     Dim arrToJs As String
     
-    arrToJs = converter_coll_to_array_javascript(addRows)
-    funcJavascript = formatString("function drawChart() {{1}{0}{0}var data = new google.visualization.DataTable();{1}{0}{0}data.addColumn('string', '{2}');{1}{0}{0}data.addColumn('number', '{3}');{1}{0}{0}data.addRows([{1}{0}{0}{0}{0}{4}{1}{0}{0}]);", BLANK, vbCrLf, head1, head2, arrToJs)
+    arrToJs = converterCollectionToString(addRows)
+    
+    If Me.modeChart = 2 Then
+        funcJavascript = formatString( _
+                                    "function drawChart() {{0}{1}{1}  var data = google.visualization.arrayToDataTable([{0}{2}{0}]);" _
+                                    , vbCrLf, BLANK, arrToJs)
+                                    
+    Else
+        funcJavascript = formatString( _
+                                    "function drawChart() {{1}{0}{0}var data = new google.visualization.DataTable();{1}{0}{0}data.addColumn('string', '{2}');{1}{0}{0}data.addColumn('number', '{3}');{1}{0}{0}data.addRows([{1}{0}{0}{0}{0}{4}{1}{0}{0}]);" _
+                                    , BLANK, vbCrLf, headString, headNumber, arrToJs)
+                                    
+    End If
     
     drawChartForJavascript = funcJavascript
-    
 End Function
-Private Function converter_coll_to_array_javascript(ByRef arrCollection As Collection) As String
+
+Private Function converterCollectionToString(ByRef arrCollection As Collection) As String
     
+    Rem chr(9) = TAB
     Dim arrToJs As String
     Dim i As Integer
     
     For i = 1 To arrCollection.Count
         If i = 1 Then
-            arrToJs = arrCollection.Item(i)
+            arrToJs = Chr(9) & arrCollection.Item(i)
         Else
-            arrToJs = arrToJs & "," & vbCrLf & BLANK & BLANK & BLANK & BLANK & arrCollection.Item(i)
+            arrToJs = arrToJs & "," & vbCrLf & Chr(9) & arrCollection.Item(i)
         End If
     Next i
     
-    converter_coll_to_array_javascript = arrToJs
+    converterCollectionToString = arrToJs
     
 End Function
 Private Function readFile(ByVal pathFile As String) As String
@@ -201,7 +273,7 @@ Cath:
     
 End Function
 
-Rem funciones que devuelven una constante para el cambiar el tipo de gráfico
+Rem propiedades que devuelven una constante para el cambiar el tipo de gráfico
 Public Property Get ColumnChart() As String
     ColumnChart = COLUMNCHART_C
 End Property
@@ -224,13 +296,13 @@ Public Property Get PieChart() As String
     PieChart = PIECHART_C
 End Property
 
+Rem al crearse una instancia de esta clase
 Private Sub Class_Initialize()
 
     With Me
-        .title = "Gráfico generado para Access"
-        .widthChart = 800
-        .eightChart = 600
+        .modeChart = 1
         .typeChart = PIECHART_C
+        optionVisualization = formatString("var options = {0}", OPTION_DEFAULT_CHART)
     End With
     
 End Sub
